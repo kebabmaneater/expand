@@ -1,7 +1,7 @@
 [package]
 name = "kebabmaneater/expand"
 description = "Expand the roblox API. Wally has a problem with types though so the signal isn't 100% typed, forced to use RBXScriptConnection instead of Signal.Signal<Instance>"
-version = "0.1.4"
+version = "0.2.1"
 license = "MIT"
 authors = ["Kebabmaneater"]
 registry = "https://github.com/UpliftGames/wally-index"

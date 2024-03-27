@@ -1,34 +1,10 @@
-local APIDump = require(script.APIDump)
 local Signal = require(script.Parent.Signal)
 local Tree = require(script.Parent.Tree)
 local Trove = require(script.Parent.Trove)
 
-function getMembers(instance: Instance)
-	local API = APIDump.APIDump
-	local members = {}
-
-	for _, class in API.Classes do
-		if class.Name ~= instance.ClassName and class.Name ~= "Instance" then
-			continue
-		end
-		for _, member in class.Members do
-			if typeof(member.Tags) == "table" then
-				if table.find(member.Tags, "NotScriptable") or table.find(member.Tags, "Deprecated") then
-					continue
-				end
-			end
-			if member.Security == "None" or member.Security.Read == "None" or member.Security.Write == "None" then
-				table.insert(members, member)
-			end
-		end
-	end
-
-	return members
-end
-
 type APIExpanderImpl = {
 	__index: APIExpanderImpl,
-	new: <T>(instanceOrString: Instance) -> APIExpander & Instance,
+	new: <T>(instance: T) -> APIExpander & T,
 	WaitForChildWhichIsA: (self: APIExpander, className: string, timeOut: number) -> Instance,
 	GetChildrenOfClass: (self: APIExpander, className: string) -> { Instance },
 	GetDescendantsOfClass: (self: APIExpander, className: string) -> { Instance },
@@ -43,7 +19,7 @@ type APIExpanderImpl = {
 	Find: (self: APIExpander, pathToInstance: string, assertIsA: string) -> Instance?,
 	Await: (self: APIExpander, pathToInstance: string, timeOut: number, assertIsA: string) -> Instance,
 	Exists: (self: APIExpander, pathToInstance: string, assertIsA: string) -> boolean,
-	_Destroy: (self: APIExpander) -> nil,
+	_destroy: (self: APIExpander) -> nil,
 }
 
 type APIExpanderProperties = {
@@ -55,19 +31,33 @@ type APIExpanderProperties = {
 type APIExpander = typeof(setmetatable({} :: APIExpanderProperties, {} :: APIExpanderImpl))
 
 local Expand: APIExpanderImpl = {} :: APIExpanderImpl
-Expand.__index = Expand
+Expand.__index = function(self, key)
+	if Expand[key] then
+		return Expand[key]
+	end
+
+	if not self.Instance[key] then
+		error(`Attempt to index {self.Instance} with key {key} that does not exist`)
+	end
+
+	if typeof(self.Instance[key]) == "function" then
+		return function(self, ...)
+			return (self.Instance[key] :: (any) -> ())(self.Instance, ...)
+		end
+	end
+	return self.Instance[key]
+end :: any
 
 function Expand.new<T>(instance)
 	local self = setmetatable({}, Expand)
 
 	self.Instance = instance
 	self._trove = Trove.new()
-	self.Instance.Destroying:Connect(function()
-		self:_Destroy()
-	end)
-
 	self.SiblingAdded = self._trove:Add(Signal.new())
 	self.SiblingRemoved = self._trove:Add(Signal.new())
+	self.Instance.Destroying:Connect(function()
+		self:Destroy()
+	end)
 
 	local parent = self.Instance.Parent
 	if parent then
@@ -81,20 +71,6 @@ function Expand.new<T>(instance)
 		self._trove:Add(parent.ChildRemoved:Connect(function(child)
 			self.SiblingRemoved:Fire(child)
 		end))
-	end
-
-	local members = getMembers(instance)
-	if not members then
-		return self
-	end
-	for _, member in members do
-		if member.MemberType == "Function" then
-			self[member.Name] = function(self, ...)
-				return instance[member.Name](instance, ...)
-			end
-		elseif member.MemberType == "Property" or member.MemberType == "Event" then
-			self[member.Name] = instance[member.Name]
-		end
 	end
 
 	return self
@@ -212,9 +188,8 @@ function Expand:Exists(pathToInstance, assertIsA)
 	return Tree.Exists(self.Instance, pathToInstance, assertIsA)
 end
 
-function Expand:_Destroy()
+function Expand:_destroy()
 	self._trove:Destroy()
-	self.Instance = nil
 	setmetatable(self, nil)
 	table.clear(self)
 	self = nil
